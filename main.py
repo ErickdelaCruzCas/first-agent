@@ -4,6 +4,8 @@ from google import genai
 from google.genai import types
 
 import argparse
+from prompts import system_prompt
+from functions.call_function import available_functions, call_function
 
 
 
@@ -37,7 +39,12 @@ def main():
 
     response = client.models.generate_content(
         model="gemini-2.5-flash",
-        contents=messages
+        contents=messages,
+        config=types.GenerateContentConfig(
+            tools=[available_functions],
+            system_instruction=system_prompt,
+            temperature=0
+        )
     )
 
     usage = response.usage_metadata
@@ -51,7 +58,35 @@ def main():
         print(f"Prompt tokens: {usage.prompt_token_count}")
         print(f"Response tokens: {usage.candidates_token_count}")
 
-    print(response.text)
+    # Check if the response contains function calls
+    if response.candidates[0].content.parts[0].function_call:
+        function_results = []
+
+        # Iterate over function calls and execute them
+        for part in response.candidates[0].content.parts:
+            if part.function_call:
+                # Call the function
+                function_call_result = call_function(part.function_call, verbose=args.verbose)
+
+                # Validate the result
+                if not function_call_result.parts:
+                    raise RuntimeError("Function call result has no parts")
+
+                if function_call_result.parts[0].function_response is None:
+                    raise RuntimeError("Function response is None")
+
+                if function_call_result.parts[0].function_response.response is None:
+                    raise RuntimeError("Function response.response is None")
+
+                # Add to list of function results
+                function_results.append(function_call_result.parts[0])
+
+                # Print verbose output
+                if args.verbose:
+                    print(f"-> {function_call_result.parts[0].function_response.response}")
+    else:
+        # No function calls, print the text response
+        print(response.text)
 
 if __name__ == "__main__":
     main()
